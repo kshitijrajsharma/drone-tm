@@ -1,6 +1,7 @@
 // Keep this file export-free so these remain ambient module declarations.
 
 declare module "@qfield/generate/core.js";
+declare module "@qfield/generate/corridor.js";
 declare module "@qfield/generate/placemarks.js";
 declare module "@qfield/generate/parameters.js";
 declare module "@qfield/generate/drone_specs.js";

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { AoiError, formatArea, readAoiFile, ringAreaM2, validateRing } from "../src/core/aoi";
+import {
+  AoiError,
+  areaSize,
+  corridorArea,
+  formatArea,
+  formatLength,
+  lineLengthM,
+  readAoiFile,
+  ringAreaM2,
+  validateRing,
+} from "../src/core/aoi";
 
 const SQUARE: Array<[number, number]> = [
   [85.28, 27.68],
@@ -127,6 +137,94 @@ describe("readAoiFile", () => {
     await expect(
       readAoiFile(file({ type: "MultiPolygon", coordinates: [[SQUARE], [SQUARE]] })),
     ).rejects.toThrow(/multiple flight areas/);
+  });
+
+  it("reads a line as a corridor of the width asked for", async () => {
+    const road = [
+      [85.3, 27.7],
+      [85.31, 27.7],
+    ];
+
+    const result = await readAoiFile(file({ type: "LineString", coordinates: road }), 80);
+
+    expect(result.corridor).toEqual({ centreline: road, widthM: 80 });
+    // 985 m long and 80 m wide
+    expect(result.areaM2).toBeGreaterThan(985 * 80 * 0.95);
+    expect(result.areaM2).toBeLessThan(985 * 80 * 1.05);
+  });
+
+  it("still reads a polygon as a plain flight area", async () => {
+    const result = await readAoiFile(file({ type: "Polygon", coordinates: [SQUARE] }), 80);
+
+    expect(result.corridor).toBeUndefined();
+  });
+
+  it("explains that a point cannot define an area", async () => {
+    await expect(readAoiFile(file({ type: "Point", coordinates: [85.3, 27.7] }))).rejects.toThrow(
+      /No polygon or line/,
+    );
+  });
+});
+
+describe("lineLengthM", () => {
+  it("measures a degree of latitude as about 111 km", () => {
+    expect(
+      lineLengthM([
+        [85.3, 27],
+        [85.3, 28],
+      ]),
+    ).toBeCloseTo(111195, -2);
+  });
+
+  it("adds up every segment of a bent line", () => {
+    const bent: Array<[number, number]> = [
+      [85.3, 27.7],
+      [85.31, 27.7],
+      [85.31, 27.71],
+    ];
+    expect(lineLengthM(bent)).toBeCloseTo(
+      lineLengthM([bent[0], bent[1]]) + lineLengthM([bent[1], bent[2]]),
+      6,
+    );
+  });
+
+  it("formats short lines in metres and long ones in km", () => {
+    expect([formatLength(850), formatLength(3813)]).toEqual(["850 m", "3.81 km"]);
+  });
+});
+
+describe("areaSize", () => {
+  it("gives a line's length and width, and an area's size", () => {
+    // 0.01 degrees of longitude at 27.7 degrees north is about 985 m
+    const line = corridorArea(
+      [
+        [85.3, 27.7],
+        [85.31, 27.7],
+      ],
+      120,
+    );
+
+    expect(areaSize(line)).toBe("985 m line, 120 m wide");
+    expect(areaSize(validateRing(SQUARE))).toMatch(/^\d+\.\d+ km² area$/);
+  });
+});
+
+describe("corridorArea", () => {
+  const road: Array<[number, number]> = [
+    [85.3, 27.7],
+    [85.31, 27.7],
+  ];
+
+  it("grows with the corridor width", () => {
+    expect(corridorArea(road, 200).areaM2).toBeGreaterThan(corridorArea(road, 100).areaM2 * 1.9);
+  });
+
+  it("rejects a width of zero", () => {
+    expect(() => corridorArea(road, 0)).toThrow(AoiError);
+  });
+
+  it("rejects a line with no length", () => {
+    expect(() => corridorArea([road[0], road[0]], 50)).toThrow(/no length/);
   });
 });
 

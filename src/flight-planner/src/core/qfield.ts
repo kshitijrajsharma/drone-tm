@@ -1,4 +1,5 @@
 import * as core from "@qfield/generate/core.js";
+import * as corridor from "@qfield/generate/corridor.js";
 import * as placemarks from "@qfield/generate/placemarks.js";
 import * as specs from "@qfield/generate/drone_specs.js";
 import * as dji from "@qfield/output/dji.js";
@@ -6,6 +7,8 @@ import * as kmz from "@qfield/output/kmz.js";
 import * as potensic from "@qfield/output/potensic_v2.js";
 
 import type {
+  CorridorConfig,
+  CorridorResult,
   DroneSpec,
   DroneTypeKey,
   FlightModeKey,
@@ -24,6 +27,16 @@ export const generate = core.generate as (
   polygonCoords: Array<[number, number]>,
   config: GenerateConfig,
 ) => GenerateResult;
+
+export const generateCorridor = corridor.generateCorridor as (
+  lineCoords: Array<[number, number]>,
+  config: CorridorConfig,
+) => CorridorResult;
+
+export const corridorOutline = corridor.corridorOutline as (
+  lineCoords: Array<[number, number]>,
+  corridorWidth: number,
+) => Array<[number, number]>;
 
 export const applyTerrainFollowing = core.applyTerrainFollowing as (
   geojson: WaypointCollection,

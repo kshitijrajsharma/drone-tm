@@ -1,7 +1,14 @@
 import type { AppState, Step } from "../app";
+import { areaSize } from "../core/aoi";
 import { bboxIncludingPoint } from "../core/dem";
 import { cropForBundle } from "../core/geotiff-write";
-import { batteryBudget, buildPlan } from "../core/flightplan";
+import {
+  batteryBudget,
+  buildPlan,
+  DJI_MAX_WAYPOINTS,
+  exceedsDjiWaypointLimit,
+  photoCount,
+} from "../core/flightplan";
 import { DRONE_CHOICES } from "../core/qfield";
 import {
   buildOutputs,
@@ -79,6 +86,7 @@ export const step4: Step = {
           </wa-button>
         </div>
         <p class="muted">
+          ${escapeHtml(areaSize(aoi))},
           ${escapeHtml(droneLabel(params.droneType))},
           ${params.useGsd ? `${params.gsd} cm/px` : `${params.agl} m altitude`},
           ${params.forwardOverlap}/${params.sideOverlap}% overlap,
@@ -90,7 +98,10 @@ export const step4: Step = {
     }
 
     const budget = batteryBudget(params.droneType, result.estimatedFlightTimeMinutes);
-    const photos = result.waypoints.features.filter((f) => f.properties.take_photo).length;
+    const photos = photoCount(result, params);
+    const photoTitle = photos.timed
+      ? ` title="Estimated: the camera shoots every ${params.imageInterval} s on its timer"`
+      : "";
 
     const altitudes = result.waypoints.features
       .map((f) => f.geometry.coordinates[2])
@@ -114,6 +125,18 @@ export const step4: Step = {
            Fits comfortably within one battery.
          </wa-callout>`;
 
+    const waypointCallout = exceedsDjiWaypointLimit(result, params)
+      ? `<wa-callout variant="warning" appearance="outlined">
+           <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+           <strong>Too many waypoints for DJI Fly.</strong>
+           <p>
+             This plan has ${result.waypoints.features.length} waypoints; DJI Fly accepts up
+             to ${DJI_MAX_WAYPOINTS}. Split the area or corridor into shorter parts, or raise the
+             GSD so fewer passes are needed.
+           </p>
+         </wa-callout>`
+      : "";
+
     const missingCallout =
       result.sampled && result.sampled.missing > 0
         ? `<wa-callout variant="warning" appearance="outlined" size="s">
@@ -126,11 +149,13 @@ export const step4: Step = {
     return `
       ${coachLead("generate")}
 
+      <p class="muted">${escapeHtml(areaSize(aoi))}</p>
+
       <div class="stat-row">
         <div class="stat"><span class="stat-label">Waypoints</span>
           <span class="stat-value">${result.waypoints.features.length}</span></div>
-        <div class="stat"><span class="stat-label">Photos</span>
-          <span class="stat-value">${photos}</span></div>
+        <div class="stat"${photoTitle}><span class="stat-label">Photos</span>
+          <span class="stat-value">${photos.timed ? `~${photos.count}` : photos.count}</span></div>
         <div class="stat"><span class="stat-label">Flight time</span>
           <span class="stat-value">${escapeHtml(minutes(result.estimatedFlightTimeMinutes))}</span></div>
       </div>
@@ -145,6 +170,7 @@ export const step4: Step = {
       </div>
 
       ${batteryCallout}
+      ${waypointCallout}
       ${missingCallout}
 
       ${coachTips("generate")}
@@ -201,7 +227,7 @@ export const step4: Step = {
 
       try {
         const sampler = params.terrainFollow ? dem.sampler : null;
-        const result = buildPlan(aoi.ring, params, sampler);
+        const result = buildPlan(aoi.ring, params, sampler, aoi.corridor);
         ctx.state.result = result;
         ctx.state.meta.generatedAt ??= new Date().toISOString();
         outputs = buildOutputs(result, params, ctx.state.meta);

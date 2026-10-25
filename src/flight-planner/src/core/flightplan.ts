@@ -6,8 +6,11 @@ import {
   DroneType,
   FlightMode,
   generate,
+  generateCorridor,
   GimbalAngle,
+  outputFormatFor,
 } from "./qfield";
+import type { Corridor } from "./aoi";
 import type {
   DroneTypeKey,
   FlightModeKey,
@@ -91,13 +94,17 @@ export function buildPlan(
   ring: Array<[number, number]>,
   params: PlanParams,
   dem: DemSampler | null,
+  corridor?: Corridor,
 ): PlanResult {
   const terrainFollowing = params.terrainFollow && dem !== null;
 
   const generateMode: FlightModeKey =
     terrainFollowing && params.flightMode === "waylines" ? "waypoints" : params.flightMode;
 
-  const result = generate(ring, toGenerateConfig(params, generateMode));
+  const config = toGenerateConfig(params, generateMode);
+  const result = corridor
+    ? generateCorridor(corridor.centreline, { ...config, corridorWidth: corridor.widthM })
+    : generate(ring, config);
 
   if (!terrainFollowing || !dem) {
     const waypoints = applyFlatPlacemarks(result.geojson, result.parameters);
@@ -146,6 +153,27 @@ export function buildPlan(
     terrainFollowing: true,
     sampled: { ok, missing },
   };
+}
+
+/** A plan without photo points relies on the camera timer, so its count is estimated. */
+export function photoCount(
+  result: PlanResult,
+  params: PlanParams,
+): { count: number; timed: boolean } {
+  const triggers = result.waypoints.features.filter((f) => f.properties.take_photo).length;
+  if (triggers > 0) return { count: triggers, timed: false };
+  const seconds = result.estimatedFlightTimeMinutes * 60;
+  return { count: Math.round(seconds / params.imageInterval), timed: true };
+}
+
+/** DJI Fly accepts up to 200 waypoints in a mission (DJI support, "Waypoint Flight"). */
+export const DJI_MAX_WAYPOINTS = 200;
+
+export function exceedsDjiWaypointLimit(result: PlanResult, params: PlanParams): boolean {
+  return (
+    outputFormatFor(params.droneType) === "dji" &&
+    result.waypoints.features.length > DJI_MAX_WAYPOINTS
+  );
 }
 
 export function batteryBudget(

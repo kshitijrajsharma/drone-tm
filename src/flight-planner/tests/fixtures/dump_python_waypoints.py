@@ -1,11 +1,39 @@
 import sys, os, json
 sys.path.insert(0, '/sam/repos/drone-tm/src/backend/packages/drone-flightplan')
+from drone_flightplan.corridor import create_corridor_waypoint
 from drone_flightplan.waypoints import create_waypoint
 from drone_flightplan.drone_type import DroneType
 from drone_flightplan.enums import FlightMode
 
 doc = json.load(open(sys.argv[1]))
 out = {}
+
+
+def dump(r):
+    g = json.loads(r["geojson"])
+    return {
+        "count": len(g["features"]),
+        "time": r["estimated_flight_time_minutes"],
+        "battery": r["battery_warning"],
+        "pts": [[round(f["geometry"]["coordinates"][0], 7),
+                 round(f["geometry"]["coordinates"][1], 7),
+                 f["properties"]["heading"],
+                 bool(f["properties"]["take_photo"])] for f in g["features"]],
+    }
+
+
+if doc["features"][0]["geometry"]["type"] == "LineString":
+    for name, width, mode in [
+        ("width80-waylines", 80, FlightMode.WAYLINES),
+        ("width250-waylines", 250, FlightMode.WAYLINES),
+        ("width250-waypoints", 250, FlightMode.WAYPOINTS),
+    ]:
+        r = create_corridor_waypoint(doc, width, None, 3.5, 75, 75, mode=mode,
+                                     drone_type=DroneType.DJI_MINI_4_PRO)
+        out[name] = dump(r) | {"passes": r["pass_count"]}
+    print(json.dumps(out))
+    sys.exit()
+
 for name, rot, auto, mode in [
     ("auto-waylines", None, True, FlightMode.WAYLINES),
     ("rot45-waylines", 315.0, False, FlightMode.WAYLINES),
@@ -15,14 +43,5 @@ for name, rot, auto, mode in [
                         side_overlap=75, rotation_angle=rot, generate_3d=False,
                         take_off_point=None, mode=mode,
                         drone_type=DroneType.DJI_MINI_4_PRO, auto_rotation=auto)
-    g = json.loads(r["geojson"])
-    out[name] = {
-        "count": len(g["features"]),
-        "time": r["estimated_flight_time_minutes"],
-        "battery": r["battery_warning"],
-        "pts": [[round(f["geometry"]["coordinates"][0], 7),
-                 round(f["geometry"]["coordinates"][1], 7),
-                 f["properties"]["heading"],
-                 bool(f["properties"]["take_photo"])] for f in g["features"]],
-    }
+    out[name] = dump(r)
 print(json.dumps(out))

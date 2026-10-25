@@ -25,6 +25,8 @@ export const step2: Step = {
   render(ctx) {
     const p = ctx.state.params;
     const preview = calculatePreview(p);
+    // Passes follow a line, so a grid angle does not apply to it.
+    const isLine = Boolean(ctx.state.aoi?.corridor);
 
     return `
       ${coachLead("params")}
@@ -113,15 +115,19 @@ export const step2: Step = {
         ><span slot="end">s</span></wa-input>
       </wa-details>
 
-      <wa-details summary="Grid rotation and takeoff" appearance="outlined">
-        <wa-switch id="auto-rotation" ${p.autoRotation ? "checked" : ""}
+      <wa-details summary="${isLine ? "Takeoff" : "Grid rotation and takeoff"}" appearance="outlined">
+        ${
+          isLine
+            ? ""
+            : `<wa-switch id="auto-rotation" ${p.autoRotation ? "checked" : ""}
           hint="${escapeHtml(HINTS.autoRotation)}">Rotate grid automatically</wa-switch>
 
         <wa-input id="rotation-angle" type="number" label="Grid angle"
           hint="${escapeHtml(HINTS.rotationAngle)}"
           value="${p.rotationAngle}" min="0" max="359" step="1"
           ${p.autoRotation ? "disabled" : ""}
-        ><span slot="end">°</span></wa-input>
+        ><span slot="end">°</span></wa-input>`
+        }
 
         <div class="takeoff-row">
           <span class="field-label">Takeoff point</span>

@@ -4,6 +4,7 @@ import os
 
 from drone_flightplan.add_elevation_from_dem import add_elevation_from_dem
 from drone_flightplan.calculate_parameters import calculate_parameters
+from drone_flightplan.corridor import create_corridor_waypoint
 from drone_flightplan.create_flightplan import (
     build_placemarks,
     create_flightplan,
@@ -17,6 +18,7 @@ __all__ = [
     "add_elevation_from_dem",
     "build_placemarks",
     "calculate_parameters",
+    "create_corridor_waypoint",
     "create_flightplan",
     "create_placemarks",
     "create_waypoint",

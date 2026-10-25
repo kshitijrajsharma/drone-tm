@@ -9,6 +9,7 @@ from drone_flightplan.drone_type import (
     DroneType,
     drone_type_arg,
 )
+from drone_flightplan.enums import FlightMode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -210,6 +211,41 @@ def calculate_parameters(
         "altitude_above_ground_level": agl,
         "adjusted_max_battery_life": round(adjusted_max_battery_life, 2),
     }
+
+
+def effective_spacing(
+    parameters: dict, mode: FlightMode, image_interval: int = 2
+) -> tuple[float, float]:
+    """Waylines shoot on a timer, so a clamped ground speed shrinks the forward
+    gap; side spacing is tightened to match (issue #751)."""
+    forward_spacing = parameters["forward_spacing"]
+    side_spacing = parameters["side_spacing"]
+    if mode != FlightMode.WAYLINES:
+        return forward_spacing, side_spacing
+    forward_photo_height = parameters["forward_photo_height"]
+    side_photo_width = parameters["side_photo_width"]
+    actual_forward_spacing = parameters["ground_speed"] * image_interval
+    if (
+        forward_photo_height > 0
+        and side_photo_width > 0
+        and actual_forward_spacing < forward_spacing
+    ):
+        matched_side_spacing = (
+            side_photo_width * actual_forward_spacing / forward_photo_height
+        )
+        side_spacing = min(side_spacing, matched_side_spacing)
+        forward_spacing = actual_forward_spacing
+    return forward_spacing, side_spacing
+
+
+def exceeds_battery(drone_type: DroneType, flight_time_minutes: float) -> bool:
+    """20% of the battery is kept for the return flight."""
+    battery_life = DRONE_SPECS[drone_type].get("max_battery_life_minutes")
+    if not isinstance(battery_life, dict):
+        return False
+    tested = battery_life.get("tested_value")
+    minutes = tested if tested is not None else battery_life["quoted_value"]
+    return flight_time_minutes > minutes * 0.8
 
 
 def main():

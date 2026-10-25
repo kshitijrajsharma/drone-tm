@@ -119,6 +119,28 @@ create_waypoint(
 
 - Run `uv run waypoints` to see options.
 
+#### Corridors along a line
+
+`create_corridor_waypoint` plans parallel passes along a LineString, such as a
+road or river, covering `corridor_width` metres centred on the line. The line can
+be a geometry, a Feature, or a FeatureCollection with one feature. The number of
+passes follows from the width, the photo footprint and the side overlap. The
+output has the same format as `create_waypoint`, so terrain following and every
+output writer work with it.
+
+```
+from drone_flightplan import create_corridor_waypoint
+
+create_corridor_waypoint(
+    centreline_area,
+    corridor_width,
+    agl,
+    gsd,
+    forward_overlap,
+    side_overlap,
+)
+```
+
 ### 3. `add_elevation_from_dem`
 
 This module integrates elevation data from Digital Elevation Models (DEMs) into the flight plan to account for changes in terrain. This ensures more accurate waypoint positioning for varying altitudes:
@@ -187,8 +209,12 @@ create_flightplan(
     flight_mode="waypoints",
     rotation_angle=None,  # or an angle in degrees
     take_off_point=None,
+    corridor_width=None,
 )
 ```
+
+With `corridor_width` set, `aoi` is a LineString and the plan flies a corridor
+along it, as described under `create_corridor_waypoint`.
 
 **Parameters:**
 

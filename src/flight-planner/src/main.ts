@@ -19,11 +19,12 @@ import {
   type StepContext,
 } from "./app";
 import { step1 } from "./steps/step1-area";
+import { showArea } from "./map/show-area";
 import { step2 } from "./steps/step2-params";
 import { step3 } from "./steps/step3-dem";
 import { step4 } from "./steps/step4-generate";
 import { escapeHtml } from "./steps/ui";
-import { fetchAoi, formatArea, validateRing } from "./core/aoi";
+import { corridorArea, fetchAoi, formatArea, validateRing } from "./core/aoi";
 import { DEFAULT_PARAMS } from "./core/flightplan";
 import { fetchParams, parseParams } from "./core/params";
 import { fetchTasks, seedTaskPlans, tasksBbox } from "./core/seed";
@@ -647,7 +648,11 @@ async function loadPlanIntoState(id: string): Promise<boolean> {
   if (!loaded) return false;
 
   state.meta = loaded.meta;
-  state.aoi = loaded.aoiRing ? validateRing(loaded.aoiRing) : null;
+  state.aoi = loaded.aoiCorridor
+    ? corridorArea(loaded.aoiCorridor.centreline, loaded.aoiCorridor.widthM)
+    : loaded.aoiRing
+      ? validateRing(loaded.aoiRing)
+      : null;
   if (loaded.params) state.params = parseParams(loaded.params);
   if (loaded.meta.dem && !loaded.demBytes) delete state.meta.dem;
   state.dem = { ...NO_TERRAIN };
@@ -666,7 +671,7 @@ async function loadPlanIntoState(id: string): Promise<boolean> {
   }
   state.result = null;
   if (state.aoi) {
-    map.setRing(state.aoi.ring);
+    showArea(map, state.aoi);
     map.fitBbox(state.aoi.bbox);
   } else {
     map.clearRing();
@@ -1084,7 +1089,7 @@ async function runUrlHandoff(): Promise<void> {
     try {
       const aoi = await fetchAoi(aoiUrl);
       state.aoi = aoi;
-      map.setRing(aoi.ring);
+      showArea(map, aoi);
       map.fitBbox(aoi.bbox);
       state.step = 2;
     } catch (error) {

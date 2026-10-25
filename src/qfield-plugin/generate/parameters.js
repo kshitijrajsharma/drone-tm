@@ -69,3 +69,35 @@ function calculateParameters(forwardOverlap, sideOverlap, agl, gsd, imageInterva
         adjusted_max_battery_life: Math.round(adjustedBattery * 100) / 100
     };
 }
+
+// Waylines shoot on a timer, so a clamped ground speed shrinks the forward
+// gap; side spacing is tightened to match (issue #751).
+function effectiveSpacing(parameters, flightMode, imageInterval) {
+    var forwardSpacing = parameters.forward_spacing;
+    var sideSpacing = parameters.side_spacing;
+    if (flightMode !== Specs.FlightMode.WAYLINES) {
+        return { forward: forwardSpacing, side: sideSpacing };
+    }
+    var forwardPhotoHeight = parameters.forward_photo_height;
+    var sidePhotoWidth = parameters.side_photo_width;
+    var actualForwardSpacing = parameters.ground_speed * imageInterval;
+    if (forwardPhotoHeight > 0 && sidePhotoWidth > 0 &&
+        actualForwardSpacing < forwardSpacing) {
+        var matchedSideSpacing =
+            sidePhotoWidth * actualForwardSpacing / forwardPhotoHeight;
+        if (matchedSideSpacing < sideSpacing) {
+            sideSpacing = matchedSideSpacing;
+        }
+        forwardSpacing = actualForwardSpacing;
+    }
+    return { forward: forwardSpacing, side: sideSpacing };
+}
+
+// 20% of the battery is kept for the return flight.
+function exceedsBattery(droneType, flightTimeMinutes) {
+    var specs = Specs.DRONE_SPECS[droneType];
+    if (!specs || !specs.max_battery_life_minutes) return false;
+    var batteryLife = specs.max_battery_life_minutes.tested_value ||
+                      specs.max_battery_life_minutes.quoted_value;
+    return flightTimeMinutes > (batteryLife * 0.8);
+}

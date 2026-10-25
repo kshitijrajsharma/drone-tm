@@ -1,0 +1,66 @@
+name: Flight planner on GitHub Pages
+
+on:
+  push:
+    branches: [feat/corridor-flight-plan]
+    paths:
+      - src/flight-planner/**
+      - src/qfield-plugin/**
+      - .github/workflows/planner-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a deploy that is already running.
+concurrency:
+  group: planner-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # hotosm deploys its planner itself.
+    if: github.repository_owner != 'hotosm'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/flight-planner
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # tests/placemarks-parity.test.ts reads an earlier main.qml from git history
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: src/flight-planner/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          VITE_MAIN_SITE_URL: https://drone.hotosm.org
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: src/flight-planner/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

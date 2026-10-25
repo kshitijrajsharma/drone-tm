@@ -9,6 +9,7 @@ from shapely.geometry import shape
 
 from drone_flightplan.add_elevation_from_dem import add_elevation_from_dem
 from drone_flightplan.calculate_parameters import calculate_parameters
+from drone_flightplan.corridor import create_corridor_waypoint
 from drone_flightplan.create_placemarks import create_placemarks
 from drone_flightplan.drone_type import DRONE_PARAMS, DroneType, drone_type_arg
 from drone_flightplan.enums import FlightMode, GimbalAngle, flight_mode_arg
@@ -37,9 +38,13 @@ def build_placemarks(
     take_off_point: list[float] | None = None,
     drone_type: DroneType = DroneType.DJI_MINI_4_PRO,
     gimbal_angle: GimbalAngle = GimbalAngle.OFF_NADIR,
+    corridor_width: float | None = None,
 ):
     """Generate placemarks for a flight plan, applying terrain following when
     a DEM is provided.
+
+    With `corridor_width`, `aoi` is a LineString centreline and the plan flies
+    parallel passes along it; `rotation_angle` and `take_off_point` must be None.
 
     Returns:
         (placemarks, waypoint_data) tuple. `placemarks` is a GeoJSON dict ready
@@ -72,22 +77,39 @@ def build_placemarks(
     if dem and flight_mode == FlightMode.WAYLINES:
         waypoint_mode = FlightMode.WAYPOINTS
 
-    waypoint_data = create_waypoint(
-        project_area=aoi,
-        agl=agl,
-        gsd=gsd,
-        forward_overlap=forward_overlap,
-        side_overlap=side_overlap,
-        rotation_angle=grid_rotation_angle,
-        generate_3d=generate_3d,
-        take_off_point=take_off_point,
-        drone_type=drone_type,
-        mode=waypoint_mode,
-        gimbal_angle=gimbal_angle,
-    )
+    if corridor_width is None:
+        waypoint_data = create_waypoint(
+            project_area=aoi,
+            agl=agl,
+            gsd=gsd,
+            forward_overlap=forward_overlap,
+            side_overlap=side_overlap,
+            rotation_angle=grid_rotation_angle,
+            generate_3d=generate_3d,
+            take_off_point=take_off_point,
+            drone_type=drone_type,
+            mode=waypoint_mode,
+            gimbal_angle=gimbal_angle,
+        )
+        waypoint_data["rotation_angle"] = (360 - waypoint_data["rotation_angle"]) % 360
+    else:
+        if rotation_angle is not None or take_off_point is not None:
+            raise ValueError(
+                "Corridor passes follow the line: rotation_angle and take_off_point do not apply"
+            )
+        waypoint_data = create_corridor_waypoint(
+            centreline_area=aoi if isinstance(aoi, dict) else geojson.loads(aoi),
+            corridor_width=corridor_width,
+            agl=agl,
+            gsd=gsd,
+            forward_overlap=forward_overlap,
+            side_overlap=side_overlap,
+            mode=waypoint_mode,
+            drone_type=drone_type,
+            gimbal_angle=gimbal_angle,
+            image_interval=image_interval,
+        )
     points_geojson = waypoint_data["geojson"]
-
-    waypoint_data["rotation_angle"] = (360 - waypoint_data["rotation_angle"]) % 360
 
     # ---- Terrain follow support ----
     if dem:
@@ -156,6 +178,7 @@ def create_flightplan(
     take_off_point: list[float] | None = None,
     drone_type: DroneType = DroneType.DJI_MINI_4_PRO,
     gimbal_angle: GimbalAngle = GimbalAngle.OFF_NADIR,
+    corridor_width: float | None = None,
 ):
     """Arguments:
         aoi: The area of interest in GeoJSON format.
@@ -166,6 +189,7 @@ def create_flightplan(
         image_interval: The time interval between two consecutive images in seconds.
         rotation_angle: The rotation angle for the flight grid in degrees, or
             None to auto-align with the longest edge of the AOI.
+        corridor_width: Ground width in metres to map along a LineString `aoi`.
 
     Returns:
         Path to the generated drone flightplan file (e.g. kmz).
@@ -183,6 +207,7 @@ def create_flightplan(
         take_off_point=take_off_point,
         drone_type=drone_type,
         gimbal_angle=gimbal_angle,
+        corridor_width=corridor_width,
     )
     return write_flightplan_file(placemarks, drone_type, outfile, flight_mode)
 

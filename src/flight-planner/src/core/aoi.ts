@@ -1,11 +1,21 @@
 import { ringBbox, type Bbox } from "./dem";
 import { dtmFetch } from "./http";
+import { corridorOutline } from "./qfield";
+
+export interface Corridor {
+  centreline: Array<[number, number]>;
+  widthM: number;
+}
 
 export interface AoiResult {
+  /** The flight area, or for a corridor its outline. */
   ring: Array<[number, number]>;
   bbox: Bbox;
   areaM2: number;
+  corridor?: Corridor;
 }
+
+export const DEFAULT_CORRIDOR_WIDTH_M = 50;
 
 export class AoiError extends Error {
   readonly guidance: string;
@@ -28,6 +38,32 @@ export function ringAreaM2(ring: Array<[number, number]>): number {
     total += (lon2 - lon1) * rad * (2 + Math.sin(lat1 * rad) + Math.sin(lat2 * rad));
   }
   return Math.abs((total * R * R) / 2);
+}
+
+export function lineLengthM(line: Array<[number, number]>): number {
+  const R = 6371008.8;
+  const rad = Math.PI / 180;
+  let total = 0;
+  for (let i = 0; i < line.length - 1; i++) {
+    const [lon1, lat1] = line[i];
+    const [lon2, lat2] = line[i + 1];
+    const a =
+      Math.sin(((lat2 - lat1) * rad) / 2) ** 2 +
+      Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(((lon2 - lon1) * rad) / 2) ** 2;
+    total += 2 * R * Math.asin(Math.sqrt(a));
+  }
+  return total;
+}
+
+export function formatLength(metres: number): string {
+  return metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(2)} km`;
+}
+
+export function areaSize(aoi: AoiResult): string {
+  if (aoi.corridor) {
+    return `${formatLength(lineLengthM(aoi.corridor.centreline))} line, ${aoi.corridor.widthM} m wide`;
+  }
+  return `${formatArea(aoi.areaM2)} area`;
 }
 
 /** Areas are quoted in km² across DroneTM, so the planner stays in km² too. */
@@ -84,6 +120,70 @@ function singlePolygonRing(geojson: unknown): Array<[number, number]> | null {
   return rings[0] ?? null;
 }
 
+function singleLine(geojson: unknown): Array<[number, number]> | null {
+  const root = geojson as Record<string, unknown> | null;
+  const feature =
+    root?.type === "FeatureCollection" && Array.isArray(root.features)
+      ? root.features.length === 1
+        ? root.features[0]
+        : null
+      : root;
+  const node = feature as Record<string, unknown> | null;
+  const geometry = (node?.type === "Feature" ? node.geometry : node) as Record<
+    string,
+    unknown
+  > | null;
+  return geometry?.type === "LineString" && Array.isArray(geometry.coordinates)
+    ? (geometry.coordinates as Array<[number, number]>)
+    : null;
+}
+
+function checkPosition(position: unknown, index: number, noun: string): [number, number] {
+  if (
+    !Array.isArray(position) ||
+    typeof position[0] !== "number" ||
+    typeof position[1] !== "number" ||
+    !Number.isFinite(position[0]) ||
+    !Number.isFinite(position[1])
+  ) {
+    throw new AoiError(
+      `${noun} ${index + 1} is not a valid coordinate pair.`,
+      "The file may be damaged. Try drawing it on the map.",
+    );
+  }
+  const [lon, lat] = position;
+  if (Math.abs(lon) > 180 || Math.abs(lat) > 90) {
+    throw new AoiError(
+      "Those coordinates are not longitude and latitude.",
+      "The file is probably in a projected coordinate system. Re-export it as " +
+        "EPSG:4326 (WGS 84), or draw the area on the map.",
+    );
+  }
+  return [lon, lat];
+}
+
+export function corridorArea(input: Array<[number, number]>, widthM: number): AoiResult {
+  if (!Array.isArray(input) || input.length < 2) {
+    throw new AoiError("That line has fewer than two points.", "Check the file.");
+  }
+  if (!Number.isFinite(widthM) || widthM <= 0) {
+    throw new AoiError("The corridor width must be more than 0 m.", "Enter a width in metres.");
+  }
+  const centreline = input.map((position, index) => checkPosition(position, index, "Point"));
+  const bbox = ringBbox(centreline);
+  if (bbox[0] === bbox[2] && bbox[1] === bbox[3]) {
+    throw new AoiError("That line has no length.", "Draw or upload a line with some length to it.");
+  }
+  if (bbox[2] - bbox[0] > 180) {
+    throw new AoiError(
+      "That line appears to cross the antimeridian (180° longitude).",
+      "Split it into two lines, one each side of 180° longitude.",
+    );
+  }
+  const ring = corridorOutline(centreline, widthM);
+  return { ring, bbox: ringBbox(ring), areaM2: ringAreaM2(ring), corridor: { centreline, widthM } };
+}
+
 function segmentsIntersect(
   a: [number, number],
   b: [number, number],
@@ -133,29 +233,7 @@ export function validateRing(input: Array<[number, number]>): AoiResult {
     );
   }
 
-  const ring = input.map((position, index) => {
-    if (
-      !Array.isArray(position) ||
-      typeof position[0] !== "number" ||
-      typeof position[1] !== "number" ||
-      !Number.isFinite(position[0]) ||
-      !Number.isFinite(position[1])
-    ) {
-      throw new AoiError(
-        `Corner ${index + 1} is not a valid coordinate pair.`,
-        "The file may be damaged. Try drawing the area on the map.",
-      );
-    }
-    const [lon, lat] = position;
-    if (Math.abs(lon) > 180 || Math.abs(lat) > 90) {
-      throw new AoiError(
-        "Those coordinates are not longitude and latitude.",
-        "The file is probably in a projected coordinate system. Re-export it as " +
-          "EPSG:4326 (WGS 84), or draw the area on the map.",
-      );
-    }
-    return [lon, lat] as [number, number];
-  });
+  const ring = input.map((position, index) => checkPosition(position, index, "Corner"));
 
   const [firstLon, firstLat] = ring[0];
   const [lastLon, lastLat] = ring[ring.length - 1];
@@ -189,7 +267,10 @@ export function validateRing(input: Array<[number, number]>): AoiResult {
   return { ring, bbox, areaM2 };
 }
 
-export async function readAoiFile(file: File): Promise<AoiResult> {
+export async function readAoiFile(
+  file: File,
+  corridorWidthM = DEFAULT_CORRIDOR_WIDTH_M,
+): Promise<AoiResult> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await file.text());
@@ -200,11 +281,14 @@ export async function readAoiFile(file: File): Promise<AoiResult> {
     );
   }
 
+  const line = singleLine(parsed);
+  if (line) return corridorArea(line, corridorWidthM);
+
   const ring = singlePolygonRing(parsed);
   if (!ring) {
     throw new AoiError(
-      `No polygon found in "${file.name}".`,
-      "The file needs a Polygon or MultiPolygon. Points and lines cannot define a flight area.",
+      `No polygon or line found in "${file.name}".`,
+      "The file needs a Polygon, a MultiPolygon, or one LineString to fly a corridor along.",
     );
   }
   return validateRing(ring);

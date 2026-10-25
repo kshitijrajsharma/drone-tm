@@ -11,6 +11,7 @@ const ESRI_IMAGERY_TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
 export type DrawMode = "draw" | "takeoff" | "idle";
+export type DrawKind = "area" | "line";
 
 export interface TaskOutline {
   planId: string;
@@ -22,8 +23,12 @@ export interface MapController {
   map: MlMap;
   ring(): Array<[number, number]> | null;
   setRing(ring: Array<[number, number]>): void;
+  line(): Array<[number, number]> | null;
+  setLine(line: Array<[number, number]>): void;
+  /** Display only; the corridor's line is what the user edits. */
+  showOutline(ring: Array<[number, number]> | null): void;
   clearRing(): void;
-  startDrawing(): void;
+  startDrawing(kind?: DrawKind): void;
   setMode(mode: DrawMode): void;
   takeoff(): { lon: number; lat: number } | null;
   setTakeoff(point: { lon: number; lat: number } | null): void;
@@ -189,6 +194,20 @@ export function createMap(container: HTMLElement): MapController {
       if (mode === "idle") map.getCanvas().style.cursor = "";
     });
 
+    map.addSource("corridor-outline", { type: "geojson", data: emptyCollection() });
+    map.addLayer({
+      id: "corridor-outline-fill",
+      type: "fill",
+      source: "corridor-outline",
+      paint: { "fill-color": mapColor("path"), "fill-opacity": 0.12 },
+    });
+    map.addLayer({
+      id: "corridor-outline-line",
+      type: "line",
+      source: "corridor-outline",
+      paint: { "line-color": mapColor("path"), "line-width": 1.5, "line-opacity": 0.8 },
+    });
+
     map.addSource("plan-path", { type: "geojson", data: emptyCollection() });
     map.addLayer({
       id: "plan-path-line",
@@ -243,8 +262,10 @@ export function createMap(container: HTMLElement): MapController {
 
   map.on("draw.create", () => {
     const all = draw.getAll();
-    const polygons = all.features.filter((f) => f.geometry.type === "Polygon");
-    for (const feature of polygons.slice(0, -1)) {
+    const shapes = all.features.filter(
+      (f) => f.geometry.type === "Polygon" || f.geometry.type === "LineString",
+    );
+    for (const feature of shapes.slice(0, -1)) {
       if (feature.id) draw.delete(String(feature.id));
     }
     mode = "idle";
@@ -325,6 +346,27 @@ export function createMap(container: HTMLElement): MapController {
     return { ...uniform, bottom };
   }
 
+  function currentLine(): Array<[number, number]> | null {
+    const line = draw.getAll().features.find((feature) => feature.geometry.type === "LineString");
+    if (!line || line.geometry.type !== "LineString" || line.geometry.coordinates.length < 2) {
+      return null;
+    }
+    return line.geometry.coordinates.map(([lon, lat]) => [lon, lat] as [number, number]);
+  }
+
+  function showOutline(ring: Array<[number, number]> | null) {
+    const source = map.getSource("corridor-outline") as maplibregl.GeoJSONSource | undefined;
+    source?.setData(
+      ring
+        ? {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "Polygon", coordinates: [ring] },
+          }
+        : emptyCollection(),
+    );
+  }
+
   function currentRing(): Array<[number, number]> | null {
     const polygon = draw.getAll().features.find((feature) => feature.geometry.type === "Polygon");
     if (!polygon || polygon.geometry.type !== "Polygon") return null;
@@ -338,7 +380,22 @@ export function createMap(container: HTMLElement): MapController {
 
     ring: currentRing,
 
+    line: currentLine,
+
+    setLine(line) {
+      draw.deleteAll();
+      draw.add({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: line },
+      });
+      notify();
+    },
+
+    showOutline,
+
     setRing(ring) {
+      showOutline(null);
       draw.deleteAll();
       draw.add({
         type: "Feature",
@@ -349,13 +406,16 @@ export function createMap(container: HTMLElement): MapController {
     },
 
     clearRing() {
+      showOutline(null);
       draw.deleteAll();
       notify();
     },
 
-    startDrawing() {
+    startDrawing(kind = "area") {
+      showOutline(null);
       draw.deleteAll();
-      draw.changeMode("draw_polygon");
+      if (kind === "line") draw.changeMode("draw_line_string");
+      else draw.changeMode("draw_polygon");
       mode = "draw";
       notify();
     },

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { planLabel } from "../src/core/outputs";
-import { initialState, resetTerrain, savePlan } from "../src/app";
+import { initialState, loadPlan, resetTerrain, savePlan } from "../src/app";
+import { corridorArea, validateRing } from "../src/core/aoi";
 import {
   chooseBackend,
   deletePlan,
@@ -330,5 +331,38 @@ describe("updatePlanMeta", () => {
   it("reports a missing plan rather than creating one", async () => {
     useMemory();
     expect(await updatePlanMeta("gone", (m) => (m.name = "x"))).toBeNull();
+  });
+});
+
+describe("saving a corridor", () => {
+  it("restores its line and width when the plan is reopened", async () => {
+    useMemory();
+    const line: Array<[number, number]> = [
+      [85.3, 27.7],
+      [85.31, 27.7],
+      [85.31, 27.71],
+    ];
+    const state = initialState();
+    state.aoi = corridorArea(line, 80);
+
+    await savePlan(state, false);
+    const loaded = await loadPlan(state.meta.id);
+
+    expect(loaded?.aoiCorridor).toEqual({ centreline: line, widthM: 80 });
+  });
+
+  it("restores a plain area with no corridor", async () => {
+    useMemory();
+    const state = initialState();
+    state.aoi = validateRing([
+      [85.3, 27.7],
+      [85.31, 27.7],
+      [85.31, 27.71],
+      [85.3, 27.71],
+    ]);
+
+    await savePlan(state, false);
+
+    expect((await loadPlan(state.meta.id))?.aoiCorridor).toBeNull();
   });
 });

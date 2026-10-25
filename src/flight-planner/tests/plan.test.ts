@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DemSampler } from "../src/core/dem";
-import { DEFAULT_PARAMS, buildPlan, type PlanParams } from "../src/core/flightplan";
+import {
+  DEFAULT_PARAMS,
+  DJI_MAX_WAYPOINTS,
+  buildPlan,
+  exceedsDjiWaypointLimit,
+  photoCount,
+  type PlanParams,
+} from "../src/core/flightplan";
 import { buildOutputs } from "../src/core/outputs";
 import type { PlanMeta } from "../src/core/storage";
 
@@ -163,5 +170,76 @@ describe("buildOutputs", () => {
     });
 
     expect(files[0].name).toMatch(/^task_42_/);
+  });
+});
+
+describe("photoCount", () => {
+  const flat = (overrides: Partial<PlanParams>) =>
+    ({ ...DEFAULT_PARAMS, terrainFollow: false, ...overrides }) as PlanParams;
+
+  it("estimates timed photos in waylines mode, which carry no photo actions", () => {
+    const params = flat({ flightMode: "waylines", imageInterval: 2 });
+    const result = buildPlan(SMALL, params, null);
+
+    const photos = photoCount(result, params);
+
+    expect(result.waypoints.features.some((f) => f.properties.take_photo)).toBe(false);
+    expect(photos.timed).toBe(true);
+    expect(photos.count).toBeGreaterThan(0);
+  });
+
+  it("halves the estimate when the camera shoots half as often", () => {
+    const every2 = flat({ flightMode: "waylines", imageInterval: 2 });
+    const every4 = flat({ flightMode: "waylines", imageInterval: 4 });
+    const result = buildPlan(SMALL, every2, null);
+
+    expect(photoCount(result, every2).count).toBeGreaterThan(10);
+    expect(photoCount(result, every4).count).toBeCloseTo(photoCount(result, every2).count / 2, -1);
+  });
+
+  it("counts the photo points that terrain-following waylines keep", async () => {
+    const bytes = readFileSync(fileURLToPath(new URL("dem-kathmandu.tif", fixtures)));
+    const dem = await DemSampler.fromBytes(
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    );
+    const params = { ...DEFAULT_PARAMS, terrainFollow: true, flightMode: "waylines" } as PlanParams;
+    const result = buildPlan(SMALL, params, dem);
+    const triggers = result.waypoints.features.filter((f) => f.properties.take_photo).length;
+
+    expect(result.terrainFollowing).toBe(true);
+    expect(triggers).toBeGreaterThan(0);
+    expect(photoCount(result, params)).toEqual({ count: triggers, timed: false });
+  });
+
+  it("counts the photo points in waypoints mode", () => {
+    const params = flat({ flightMode: "waypoints" });
+    const result = buildPlan(SMALL, params, null);
+    const triggers = result.waypoints.features.filter((f) => f.properties.take_photo).length;
+
+    expect(photoCount(result, params)).toEqual({ count: triggers, timed: false });
+    expect(triggers).toBeGreaterThan(0);
+  });
+});
+
+describe("exceedsDjiWaypointLimit", () => {
+  const flat = (overrides: Partial<PlanParams>) =>
+    ({ ...DEFAULT_PARAMS, terrainFollow: false, ...overrides }) as PlanParams;
+  const withWaypoints = (count: number) => {
+    const result = buildPlan(SMALL, flat({}), null);
+    const one = result.waypoints.features[0];
+    return { ...result, waypoints: { ...result.waypoints, features: Array(count).fill(one) } };
+  };
+
+  it("lets a DJI plan through at exactly the limit", () => {
+    expect(exceedsDjiWaypointLimit(withWaypoints(DJI_MAX_WAYPOINTS), flat({}))).toBe(false);
+  });
+
+  it("flags a DJI plan one waypoint over the limit", () => {
+    expect(exceedsDjiWaypointLimit(withWaypoints(DJI_MAX_WAYPOINTS + 1), flat({}))).toBe(true);
+  });
+
+  it("leaves Potensic plans alone, which do not use DJI Fly", () => {
+    const params = flat({ droneType: "POTENSIC_ATOM_2" });
+    expect(exceedsDjiWaypointLimit(withWaypoints(DJI_MAX_WAYPOINTS + 1), params)).toBe(false);
   });
 });

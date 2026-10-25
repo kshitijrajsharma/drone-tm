@@ -1,5 +1,5 @@
 import type { MapController } from "./map";
-import type { AoiResult } from "./core/aoi";
+import type { AoiResult, Corridor } from "./core/aoi";
 import { bboxIncludingPoint, type Bbox, type DemSampler } from "./core/dem";
 import type { PlanParams, PlanResult } from "./core/flightplan";
 import { DEFAULT_PARAMS } from "./core/flightplan";
@@ -121,7 +121,7 @@ export async function savePlan(state: AppState, writeDem: boolean): Promise<void
       features: [
         {
           type: "Feature",
-          properties: { name: planLabel(meta) },
+          properties: { name: planLabel(meta), corridor: aoi.corridor },
           geometry: { type: "Polygon", coordinates: [aoi.ring] },
         },
       ],
@@ -150,6 +150,7 @@ export async function savePlan(state: AppState, writeDem: boolean): Promise<void
 export async function loadPlan(id: string): Promise<{
   meta: PlanMeta;
   aoiRing: Array<[number, number]> | null;
+  aoiCorridor: Corridor | null;
   params: unknown;
   demBytes: ArrayBuffer | null;
 } | null> {
@@ -157,14 +158,18 @@ export async function loadPlan(id: string): Promise<{
   if (!meta) return null;
 
   const aoiDoc = await readJson<{
-    features?: Array<{ geometry?: { coordinates?: Array<Array<[number, number]>> } }>;
+    features?: Array<{
+      properties?: { corridor?: Corridor };
+      geometry?: { coordinates?: Array<Array<[number, number]>> };
+    }>;
   }>(planPath.aoi(id));
   const aoiRing = aoiDoc?.features?.[0]?.geometry?.coordinates?.[0] ?? null;
+  const aoiCorridor = aoiDoc?.features?.[0]?.properties?.corridor ?? null;
 
   const params = await readJson<unknown>(planPath.params(id));
   const demBytes = meta.dem ? await loadPlanDem(id, meta) : null;
 
-  return { meta, aoiRing, params, demBytes };
+  return { meta, aoiRing, aoiCorridor, params, demBytes };
 }
 
 /** Reads shared terrain and migrates a legacy per-plan DEM when needed. */

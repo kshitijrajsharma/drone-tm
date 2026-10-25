@@ -70,6 +70,15 @@ export interface GenerateResult {
   parameters: FlightParameters;
 }
 
+export interface CorridorConfig extends GenerateConfig {
+  /** Metres, centred on the line. */
+  corridorWidth: number;
+}
+
+export interface CorridorResult extends GenerateResult {
+  passCount: number;
+}
+
 export interface DroneSpec {
   max_battery_life_minutes: { quoted_value: number; tested_value: number };
   sensor_height_mm: number;

@@ -58,32 +58,9 @@ function generate(polygonCoords, config) {
         agl = parameters.altitude_above_ground_level;
     }
 
-    var sideSpacing = parameters.side_spacing;
-    var forwardSpacing = parameters.forward_spacing;
-
-    // https://github.com/hotosm/drone-tm/issues/751
-    // In waylines mode photos are triggered on a fixed 2s timer, so the actual
-    // E-W photo gap is ground_speed * image_interval. When ground_speed is
-    // clamped (e.g. 11.5 m/s on DJI drones), the real gap shrinks below
-    // forward_spacing and effective E-W overlap creeps above the requested
-    // value. N-S spacing is purely geometric and unaffected, so we get
-    // asymmetric coverage. Tighten side_spacing to match if needed.
-    // Waypoints mode is untouched (no timer; photos land at the waypoints).
-    if (flightMode === Specs.FlightMode.WAYLINES) {
-        var groundSpeedParam = parameters.ground_speed;
-        var forwardPhotoHeight = parameters.forward_photo_height;
-        var sidePhotoWidth = parameters.side_photo_width;
-        var actualForwardSpacing = groundSpeedParam * imageInterval;
-        if (forwardPhotoHeight > 0 && sidePhotoWidth > 0 &&
-            actualForwardSpacing < forwardSpacing) {
-            var matchedSideSpacing =
-                sidePhotoWidth * actualForwardSpacing / forwardPhotoHeight;
-            if (matchedSideSpacing < sideSpacing) {
-                sideSpacing = matchedSideSpacing;
-            }
-            forwardSpacing = actualForwardSpacing;
-        }
-    }
+    var spacing = Params.effectiveSpacing(parameters, flightMode, imageInterval);
+    var sideSpacing = spacing.side;
+    var forwardSpacing = spacing.forward;
 
     // Project polygon to EPSG:3857 for meter-based calculations
     var poly3857 = [];
@@ -137,16 +114,7 @@ function generate(polygonCoords, config) {
         estimatedFlightTimeMinutes = (totalDistance / groundSpeed) / 60;
     }
 
-    // Check battery life
-    var batteryWarning = false;
-    var specs = Specs.DRONE_SPECS[droneType];
-    if (specs && specs.max_battery_life_minutes) {
-        var batteryLife = specs.max_battery_life_minutes.tested_value ||
-                          specs.max_battery_life_minutes.quoted_value;
-        if (estimatedFlightTimeMinutes > (batteryLife * 0.8)) {
-            batteryWarning = true;
-        }
-    }
+    var batteryWarning = Params.exceedsBattery(droneType, estimatedFlightTimeMinutes);
 
     // Convert waypoints to GeoJSON (back to WGS84)
     var features = [];

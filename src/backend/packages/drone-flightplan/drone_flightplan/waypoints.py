@@ -10,8 +10,12 @@ from shapely.geometry import Point, Polygon, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
-from drone_flightplan.calculate_parameters import calculate_parameters
-from drone_flightplan.drone_type import DRONE_SPECS, DroneType
+from drone_flightplan.calculate_parameters import (
+    calculate_parameters,
+    effective_spacing,
+    exceeds_battery,
+)
+from drone_flightplan.drone_type import DroneType
 from drone_flightplan.enums import FlightMode, GimbalAngle
 
 log = logging.getLogger(__name__)
@@ -522,7 +526,7 @@ def exclude_no_fly_zones(points: list[dict], no_fly_zones: list[Polygon]) -> lis
     ]
 
 
-def remove_middle_points(data: dict):
+def remove_middle_points(data: list[dict]):
     if not data:
         return []
 
@@ -604,43 +608,7 @@ def create_waypoint(
         drone_type=drone_type,
     )
 
-    side_spacing = parameters["side_spacing"]
-    forward_spacing = parameters["forward_spacing"]
-
-    # https://github.com/hotosm/drone-tm/issues/751
-    # In waylines mode photos are triggered on a fixed 2s timer, so
-    # the actual E-W photo gap is ground_speed * image_interval. When
-    # ground_speed is clamped (e.g. 11.5 m/s on DJI drones), the real gap
-    # shrinks below forward_spacing and effective E-W overlap creeps above
-    # the requested value. N-S spacing is purely geometric and unaffected,
-    # so we get asymmetric coverage.
-    #
-    # Fix: if the clamp-inflated E-W overlap exceeds the user's requested
-    # N-S overlap, tighten side_spacing to match. If the user asked for
-    # more N-S than E-W, leave it alone. Waypoints mode is untouched (no
-    # timer involved; photos land at the waypoints directly).
-    #
-    # Waypoint mode is not affected. The apparent E-W / N-S gap difference
-    # is purely an result of the the 4:3 sensor.
-    if mode == FlightMode.WAYLINES:
-        image_interval = 2  # seconds; matches default in calculate_parameters
-        ground_speed = parameters["ground_speed"]
-        forward_photo_height = parameters["forward_photo_height"]
-        side_photo_width = parameters["side_photo_width"]
-        actual_forward_spacing = ground_speed * image_interval
-        if (
-            forward_photo_height > 0
-            and side_photo_width > 0
-            and actual_forward_spacing < forward_spacing
-        ):
-            # side_spacing that matches the effective E-W overlap exactly
-            matched_side_spacing = (
-                side_photo_width * actual_forward_spacing / forward_photo_height
-            )
-            # Only tighten N-S if the user's requested side_spacing is
-            # looser than what the effective E-W overlap now demands.
-            side_spacing = min(side_spacing, matched_side_spacing)
-            forward_spacing = actual_forward_spacing
+    forward_spacing, side_spacing = effective_spacing(parameters, mode)
 
     # Handle FeatureCollection, Feature, Polygon
     if "features" in project_area:
@@ -753,20 +721,7 @@ def create_waypoint(
         estimated_flight_time_seconds = total_distance / ground_speed
         estimated_flight_time_minutes = estimated_flight_time_seconds / 60
 
-    # Check battery life
-    battery_warning = False
-
-    if "max_battery_life_minutes" in DRONE_SPECS[drone_type]:
-        max_battery_life_minutes = DRONE_SPECS[drone_type]["max_battery_life_minutes"]
-
-        drone_battery_life = max_battery_life_minutes.get("tested_value")
-        if drone_battery_life is None:
-            # Fallback to manufacturer specs, if untested in the field
-            drone_battery_life = max_battery_life_minutes.get("quoted_value")
-
-        # Use 80% of quoted value to allow battery for return to base
-        if estimated_flight_time_minutes > (drone_battery_life * 0.8):
-            battery_warning = True
+    battery_warning = exceeds_battery(drone_type, estimated_flight_time_minutes)
 
     # Generate GeoJSON features
     features = []
